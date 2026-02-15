@@ -20,7 +20,19 @@
     const { useState, useEffect } = React;
     
     // ⚠️ IMPORTANT: Replace this URL with your Google Apps Script Web App URL
-    const SHEETS_API_URL = 'https://script.google.com/macros/s/AKfycbw0nsyHPtZIewq_3zFixIfsN5VSt5ICK88GNLqZOd5dzuYaXZaFB_49yycInXdxGs1-/exec';
+    const SHEETS_API_URL = 'https://script.google.com/macros/s/AKfycbzNoWGyhcAn159CiHNQp_rBjRpzXXynbmM-BZk_cglT7dketdXN73ppS816FfeZ_Kg7/exec';
+    
+    // CORS Proxy - set to true if accessing from GitHub Pages
+    const USE_PROXY = window.location.hostname.includes('github.io');
+    const PROXY_URL = 'https://corsproxy.io/?';
+    
+    // Helper function to get the correct URL
+    function getApiUrl() {
+      if (USE_PROXY) {
+        return PROXY_URL + encodeURIComponent(SHEETS_API_URL);
+      }
+      return SHEETS_API_URL;
+    }
     
     // Icons
     const Calendar = ({ className, ...props }) => (
@@ -71,7 +83,7 @@
 
       const loadDataFromSheets = async () => {
         try {
-          const response = await fetch(SHEETS_API_URL);
+          const response = await fetch(getApiUrl());
           
           if (!response.ok) {
             throw new Error('Failed to load data from Google Sheets');
@@ -111,7 +123,7 @@
             checkedDates: [...checkedDates]
           };
 
-          const response = await fetch(SHEETS_API_URL, {
+          const response = await fetch(getApiUrl(), {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
