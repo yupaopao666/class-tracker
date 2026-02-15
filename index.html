@@ -11,28 +11,34 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+  
   <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%234F46E5' width='100' height='100'/><text y='75' font-size='80' fill='white' text-anchor='middle' x='50'>📚</text></svg>">
 </head>
 <body>
   <div id="root"></div>
 
+  <script>
+    // ⚠️ PASTE YOUR FIREBASE CONFIG HERE
+    const firebaseConfig = {
+  apiKey: "AIzaSyDLxCEmP3RchhEwjRULu0ELMg_iLItBfkw",
+  authDomain: "class-tracker-7ec05.firebaseapp.com",
+  databaseURL: "https://class-tracker-7ec05-default-rtdb.firebaseio.com",
+  projectId: "class-tracker-7ec05",
+  storageBucket: "class-tracker-7ec05.firebasestorage.app",
+  messagingSenderId: "34124797425",
+  appId: "1:34124797425:web:9d92e45482eb27cff6e050"
+};
+    // Initialize Firebase
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+  </script>
+
   <script type="text/babel">
     const { useState, useEffect } = React;
-    
-    // ⚠️ IMPORTANT: Replace this URL with your Google Apps Script Web App URL
-    const SHEETS_API_URL = 'https://script.google.com/macros/s/AKfycbzNoWGyhcAn159CiHNQp_rBjRpzXXynbmM-BZk_cglT7dketdXN73ppS816FfeZ_Kg7/exec';
-    
-    // CORS Proxy - set to true if accessing from GitHub Pages
-    const USE_PROXY = window.location.hostname.includes('github.io');
-    const PROXY_URL = 'https://corsproxy.io/?';
-    
-    // Helper function to get the correct URL
-    function getApiUrl() {
-      if (USE_PROXY) {
-        return PROXY_URL + encodeURIComponent(SHEETS_API_URL);
-      }
-      return SHEETS_API_URL;
-    }
     
     // Icons
     const Calendar = ({ className, ...props }) => (
@@ -47,11 +53,11 @@
     const X = ({ className, ...props }) => (
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
     );
-    const RefreshCw = ({ className, ...props }) => (
-      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
-    );
     const Cloud = ({ className, ...props }) => (
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+    );
+    const CloudOff = ({ className, ...props }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}><path d="m2 2 20 20"/><path d="M5.782 5.782A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.307-.193"/><path d="M21.532 16.5A4.5 4.5 0 0 0 17.5 10h-1.79A7.008 7.008 0 0 0 10 5.07"/></svg>
     );
 
     function ClassTracker() {
@@ -62,97 +68,57 @@
       const [showSettings, setShowSettings] = useState(false);
       const [tempTotal, setTempTotal] = useState('');
       const [isLoading, setIsLoading] = useState(true);
-      const [isSaving, setIsSaving] = useState(false);
-      const [saveStatus, setSaveStatus] = useState(''); // 'saving', 'saved', 'error'
-      const [lastSaved, setLastSaved] = useState(null);
+      const [isOnline, setIsOnline] = useState(true);
+      const [lastSynced, setLastSynced] = useState(null);
 
+      const dataRef = firebase.database().ref('classTracker');
+
+      // Load data from Firebase on mount
       useEffect(() => {
-        loadDataFromSheets();
+        const listener = dataRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+            setTotalClasses(data.totalClasses || 0);
+            setRemainingClasses(data.remainingClasses || 0);
+            setCheckedDates(new Set(data.checkedDates || []));
+            setLastSynced(data.lastModified ? new Date(data.lastModified) : new Date());
+          }
+          setIsLoading(false);
+        });
+
+        // Monitor connection state
+        const connectedRef = firebase.database().ref('.info/connected');
+        connectedRef.on('value', (snapshot) => {
+          setIsOnline(snapshot.val() === true);
+        });
+
+        return () => {
+          dataRef.off('value', listener);
+          connectedRef.off();
+        };
       }, []);
 
-      // Auto-save whenever data changes (debounced)
+      // Save data to Firebase (debounced)
       useEffect(() => {
         if (!isLoading && (totalClasses > 0 || checkedDates.size > 0)) {
           const timeoutId = setTimeout(() => {
-            saveDataToSheets();
-          }, 1000); // Save 1 second after last change
+            saveToFirebase();
+          }, 500);
 
           return () => clearTimeout(timeoutId);
         }
       }, [totalClasses, remainingClasses, checkedDates]);
 
-      const loadDataFromSheets = async () => {
+      const saveToFirebase = async () => {
         try {
-          const response = await fetch(getApiUrl());
-          
-          if (!response.ok) {
-            throw new Error('Failed to load data from Google Sheets');
-          }
-          
-          const data = await response.json();
-          
-          if (data.error) {
-            throw new Error(data.error);
-          }
-          
-          setTotalClasses(data.totalClasses || 0);
-          setRemainingClasses(data.remainingClasses || 0);
-          setCheckedDates(new Set(data.checkedDates || []));
-          if (data.lastModified) {
-            setLastSaved(new Date(data.lastModified));
-          }
-          
-        } catch (error) {
-          console.error('Error loading from Google Sheets:', error);
-          alert('Failed to load data. Please check:\n1. Your SHEETS_API_URL is correct\n2. The Google Apps Script is deployed\n3. You have internet connection');
-        } finally {
-          setIsLoading(false);
-        }
-      };
-
-      const saveDataToSheets = async () => {
-        if (isSaving) return; // Prevent multiple simultaneous saves
-        
-        setIsSaving(true);
-        setSaveStatus('saving');
-        
-        try {
-          const data = {
+          await dataRef.set({
             totalClasses,
             remainingClasses,
-            checkedDates: [...checkedDates]
-          };
-
-          const response = await fetch(getApiUrl(), {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(data)
+            checkedDates: [...checkedDates],
+            lastModified: new Date().toISOString()
           });
-
-          if (!response.ok) {
-            throw new Error('Failed to save data');
-          }
-
-          const result = await response.json();
-          
-          if (result.error) {
-            throw new Error(result.error);
-          }
-
-          setLastSaved(new Date());
-          setSaveStatus('saved');
-          
-          // Clear "saved" status after 2 seconds
-          setTimeout(() => setSaveStatus(''), 2000);
-          
         } catch (error) {
-          console.error('Error saving to Google Sheets:', error);
-          setSaveStatus('error');
-          setTimeout(() => setSaveStatus(''), 3000);
-        } finally {
-          setIsSaving(false);
+          console.error('Error saving to Firebase:', error);
         }
       };
 
@@ -214,7 +180,7 @@
           <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
             <div className="text-center">
               <Cloud className="w-16 h-16 text-indigo-600 mx-auto mb-4 animate-pulse" />
-              <div className="text-indigo-600 text-xl">Loading from Google Sheets...</div>
+              <div className="text-indigo-600 text-xl">Loading from Firebase...</div>
             </div>
           </div>
         );
@@ -231,24 +197,12 @@
                   <h1 className="text-3xl font-bold text-gray-800">Class Tracker</h1>
                 </div>
                 <div className="flex items-center gap-2">
-                  {/* Save Status Indicator */}
-                  <div className="flex items-center gap-2">
-                    {saveStatus === 'saving' && (
-                      <div className="flex items-center gap-1 text-blue-600 text-sm">
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>Saving...</span>
-                      </div>
-                    )}
-                    {saveStatus === 'saved' && (
-                      <div className="flex items-center gap-1 text-green-600 text-sm">
-                        <CheckCircle className="w-4 h-4" />
-                        <span>Saved</span>
-                      </div>
-                    )}
-                    {saveStatus === 'error' && (
-                      <div className="text-red-600 text-sm">
-                        Save failed
-                      </div>
+                  {/* Connection Status */}
+                  <div className="flex items-center gap-1">
+                    {isOnline ? (
+                      <Cloud className="w-5 h-5 text-green-600" title="Connected" />
+                    ) : (
+                      <CloudOff className="w-5 h-5 text-red-600" title="Offline" />
                     )}
                   </div>
                   
@@ -264,10 +218,10 @@
                 </div>
               </div>
               
-              {lastSaved && (
+              {lastSynced && (
                 <div className="text-sm text-gray-500 mb-4 flex items-center gap-2">
-                  <Cloud className="w-4 h-4" />
-                  <span>Last synced: {lastSaved.toLocaleString()}</span>
+                  <span>Last synced: {lastSynced.toLocaleString()}</span>
+                  {!isOnline && <span className="text-orange-600">(Offline mode)</span>}
                 </div>
               )}
               
